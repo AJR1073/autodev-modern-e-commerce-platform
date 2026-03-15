@@ -1,0 +1,387 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  CUSTOMER
+  ADMIN
+  FULFILLMENT
+}
+
+enum ProductStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum CartStatus {
+  ACTIVE
+  CONVERTED
+  ABANDONED
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  PROCESSING
+  FULFILLED
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentStatus {
+  PENDING
+  REQUIRES_ACTION
+  SUCCEEDED
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum FulfillmentStatus {
+  UNFULFILLED
+  PARTIALLY_FULFILLED
+  FULFILLED
+  SHIPPED
+  DELIVERED
+  RETURNED
+  CANCELLED
+}
+
+enum InventoryAdjustmentType {
+  MANUAL
+  SALE
+  RESTOCK
+  RETURN
+  CORRECTION
+}
+
+enum EmailNotificationType {
+  ORDER_CONFIRMATION
+  SHIPPING_UPDATE
+  LOW_STOCK_ALERT
+  ADMIN_ALERT
+}
+
+enum EmailNotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+model User {
+  id              String    @id @default(cuid())
+  email           String    @unique
+  passwordHash    String
+  firstName       String?
+  lastName        String?
+  phone           String?
+  role            UserRole  @default(CUSTOMER)
+  isActive        Boolean   @default(true)
+  emailVerifiedAt DateTime?
+  lastLoginAt     DateTime?
+  stripeCustomerId String?  @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  addresses           Address[]
+  carts               Cart[]
+  orders              Order[]
+  emailNotifications  EmailNotification[]
+
+  @@index([role])
+  @@index([createdAt])
+}
+
+model Address {
+  id           String  @id @default(cuid())
+  userId       String?
+  label        String?
+  firstName    String
+  lastName     String
+  company      String?
+  line1        String
+  line2        String?
+  city         String
+  state        String?
+  postalCode   String
+  country      String
+  phone        String?
+  isDefault    Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user            User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  billingOrders   Order[]  @relation("BillingAddress")
+  shippingOrders  Order[]  @relation("ShippingAddress")
+
+  @@index([userId])
+  @@index([country, postalCode])
+}
+
+model Category {
+  id              String    @id @default(cuid())
+  name            String
+  slug            String    @unique
+  description     String?
+  imageUrl        String?
+  seoTitle        String?
+  seoDescription  String?
+  isActive        Boolean   @default(true)
+  sortOrder       Int       @default(0)
+  parentCategoryId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  parentCategory Category?  @relation("CategoryHierarchy", fields: [parentCategoryId], references: [id], onDelete: SetNull)
+  subcategories  Category[] @relation("CategoryHierarchy")
+  products       ProductCategory[]
+
+  @@index([parentCategoryId])
+  @@index([isActive, sortOrder])
+  @@index([name])
+}
+
+model Product {
+  id               String        @id @default(cuid())
+  name             String
+  slug             String        @unique
+  sku              String        @unique
+  shortDescription String?
+  description      String?
+  price            Decimal       @db.Decimal(10, 2)
+  compareAtPrice   Decimal?      @db.Decimal(10, 2)
+  costPrice        Decimal?      @db.Decimal(10, 2)
+  currency         String        @default("USD")
+  status           ProductStatus @default(ACTIVE)
+  isFeatured       Boolean       @default(false)
+  isDigital        Boolean       @default(false)
+  seoTitle         String?
+  seoDescription   String?
+  weight           Decimal?      @db.Decimal(10, 2)
+  length           Decimal?      @db.Decimal(10, 2)
+  width            Decimal?      @db.Decimal(10, 2)
+  height           Decimal?      @db.Decimal(10, 2)
+  lowStockThreshold Int          @default(5)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  images               ProductImage[]
+  categories           ProductCategory[]
+  cartItems            CartItem[]
+  orderItems           OrderItem[]
+  inventory            Inventory?
+  inventoryAdjustments InventoryAdjustment[]
+
+  @@index([status, isFeatured])
+  @@index([name])
+  @@index([createdAt])
+}
+
+model ProductImage {
+  id        String  @id @default(cuid())
+  productId String
+  url       String
+  altText   String?
+  sortOrder Int     @default(0)
+  isPrimary Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId, sortOrder])
+  @@index([productId, isPrimary])
+}
+
+model ProductCategory {
+  productId  String
+  categoryId String
+  assignedAt DateTime @default(now())
+
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([productId, categoryId])
+  @@index([categoryId])
+}
+
+model Inventory {
+  id               String @id @default(cuid())
+  productId        String @unique
+  quantity         Int    @default(0)
+  reservedQuantity Int    @default(0)
+  trackQuantity    Boolean @default(true)
+  allowBackorder   Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  product      Product               @relation(fields: [productId], references: [id], onDelete: Cascade)
+  adjustments  InventoryAdjustment[]
+
+  @@index([quantity])
+  @@index([trackQuantity, allowBackorder])
+}
+
+model InventoryAdjustment {
+  id          String                  @id @default(cuid())
+  inventoryId String
+  productId   String
+  type        InventoryAdjustmentType
+  quantity    Int
+  reason      String?
+  reference   String?
+
+  createdAt DateTime @default(now())
+
+  inventory Inventory @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([inventoryId, createdAt])
+  @@index([productId, createdAt])
+  @@index([type])
+}
+
+model Cart {
+  id         String     @id @default(cuid())
+  userId     String?
+  sessionId  String?
+  status     CartStatus @default(ACTIVE)
+  expiresAt  DateTime?
+  convertedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user  User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  items CartItem[]
+  order Order?
+
+  @@index([userId, status])
+  @@index([sessionId, status])
+  @@index([createdAt])
+}
+
+model CartItem {
+  id         String   @id @default(cuid())
+  cartId     String
+  productId  String
+  quantity   Int      @default(1)
+  unitPrice  Decimal  @db.Decimal(10, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  cart    Cart    @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([cartId, productId])
+  @@index([productId])
+}
+
+model Order {
+  id                    String             @id @default(cuid())
+  orderNumber           String             @unique
+  userId                String?
+  cartId                String?            @unique
+  status                OrderStatus        @default(PENDING)
+  paymentStatus         PaymentStatus      @default(PENDING)
+  fulfillmentStatus     FulfillmentStatus  @default(UNFULFILLED)
+  currency              String             @default("USD")
+
+  customerEmail         String
+  customerFirstName     String
+  customerLastName      String
+  customerPhone         String?
+
+  billingAddressId      String?
+  shippingAddressId     String?
+
+  subtotalAmount        Decimal            @db.Decimal(10, 2)
+  discountAmount        Decimal            @default(0) @db.Decimal(10, 2)
+  shippingAmount        Decimal            @default(0) @db.Decimal(10, 2)
+  taxAmount             Decimal            @default(0) @db.Decimal(10, 2)
+  totalAmount           Decimal            @db.Decimal(10, 2)
+
+  stripePaymentIntentId String?            @unique
+  stripeCheckoutSessionId String?          @unique
+  paidAt                DateTime?
+  shippedAt             DateTime?
+  deliveredAt           DateTime?
+  notes                 String?
+  trackingNumber        String?
+  shippingCarrier       String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user            User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  cart            Cart?    @relation(fields: [cartId], references: [id], onDelete: SetNull)
+  billingAddress  Address? @relation("BillingAddress", fields: [billingAddressId], references: [id], onDelete: SetNull)
+  shippingAddress Address? @relation("ShippingAddress", fields: [shippingAddressId], references: [id], onDelete: SetNull)
+  items           OrderItem[]
+  notifications   EmailNotification[]
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@index([paymentStatus])
+  @@index([fulfillmentStatus])
+  @@index([customerEmail])
+}
+
+model OrderItem {
+  id          String  @id @default(cuid())
+  orderId     String
+  productId   String
+  productName String
+  productSku  String
+  quantity    Int
+  unitPrice   Decimal @db.Decimal(10, 2)
+  totalPrice  Decimal @db.Decimal(10, 2)
+
+  createdAt DateTime @default(now())
+
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@index([productId])
+}
+
+model EmailNotification {
+  id          String                  @id @default(cuid())
+  userId      String?
+  orderId     String?
+  type        EmailNotificationType
+  status      EmailNotificationStatus @default(PENDING)
+  toEmail     String
+  subject     String
+  provider    String?                 @default("sendgrid")
+  providerId  String?
+  errorMessage String?
+  sentAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user  User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+  order Order? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([orderId, createdAt])
+  @@index([type, status])
+  @@index([toEmail])
+}
